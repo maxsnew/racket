@@ -12,7 +12,10 @@
                 (values (listof nt?)
                         (listof nt?)))]
   [used-vars (-> (listof nt?)
-                 (listof symbol?))]))
+                 (listof symbol?))]
+  [fold-map/set (-> (-> any/c (set/c any/c))
+                    (listof any/c)
+                    (set/c any/c))]))
 
 ;; sep-lang : lang -> lang lang
 ;; topologically sorts non-terminals by dependency

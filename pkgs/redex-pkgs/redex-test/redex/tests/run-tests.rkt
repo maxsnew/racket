@@ -37,6 +37,7 @@
      "tut-subst-test.rkt"
      "enumerator-test.rkt"
      "enum-test.rkt"
+     "names-test.rkt"
      "bitmap-test.rkt")
    (if test-examples?
        '("<redex-examples>/redex/examples/cbn-letrec.rkt"
