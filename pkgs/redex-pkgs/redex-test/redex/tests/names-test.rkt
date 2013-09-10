@@ -21,21 +21,40 @@
 
 ;; sep-names test
 (test-begin
- (check-equal? (sep-names pat)
-               (list (named-pat 'any_1
-                                'any
-                                #t)))
- (check-equal? (sep-names rep)
-               (list (named-rep '()
-                                '..._1
-                                #f)
-                     (named-rep '()
-                                '..._1
-                                #f)))
- (check-equal? (sep-names lst)
-               (list (named-pat 'rep_1
-                                `(nt rep)
-                                #t))))
+ (check-equal? (lift-names pat)
+               (with-names (set `(name any_1 any))
+                           (set)
+                           `(name any_1
+                                  ,(with-names (set)
+                                               (set)
+                                               `any))))
+ (check-equal?
+  (lift-names rep)
+  (let* ([wrapped (λ (p)
+                     (with-names (set)
+                                 (set (named-rep '..._1 #f))
+                                 p))]
+         [rep (wrapped `(repeat
+                         ,(with-names (set)
+                                      (set)
+                                      `any)
+                         ..._1 #f))])
+    (wrapped (list rep rep))))
+
+ (check-equal?
+  (lift-names lst)
+  (let* ([w-empty (λ (p)
+                     (with-names (set)
+                                 (set)
+                                 p))]
+         [var `(name rep_1 (nt rep))]
+         [vars (set var)])
+    (with-names vars
+                (set)
+                (list (with-names vars
+                                  (set)
+                                  `(name rep_1 ,(w-empty `(nt rep))))
+                      (w-empty `(nt pat)))))))
 
 ;; multi-occurrences test
 (test-begin

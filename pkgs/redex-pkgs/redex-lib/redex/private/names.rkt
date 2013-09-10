@@ -8,76 +8,71 @@
          "match-a-pattern.rkt"
          "recursive-lang.rkt")
 
-;; TODO: throw some contracts on these hos
-
-;; a named pattern, e.g. x_1, number_!_2
-(struct named-pat (pat name notmis?)
+;; name and mismatch-name for a repeat
+(struct named-rep (name mis)
         #:transparent)
 
-;; any repeat, e.g., given a pattern p: p ... , p ..._1 or p ..._!_2
-;; pat can be used as a generic container
-(struct named-rep (pat name mis)
+;; vars : setof (U `(name ,name ,pat) `(mismatch ,name ,pat))
+;; reps : setof named-rep
+;; pat  : underlying pattern container
+(struct with-names (vars reps pat)
         #:transparent)
 
-;; n-pats : setof named-pat
-;; n-reps : setof (named-rep ())
-(struct with-names (n-pats n-reps val)
-        #:transparent)
-
-;; sep-names : pat -> μT. listof (U named-pat (named-rep T)))
-(define (sep-names pat)
-  ;; μT. sexpof (U named-pat (named-rep T))
-  ;; -> μT. (U named-pat named-rep (listof (U named-pat (named-rep T))))
-  (define (flatten-names names)
-    (match names
-      [(cons name rest)
-       (append (flatten-names name)
-               (flatten-names rest))]
-      ;; suspect
-      ['() '()]
-      [(named-pat _ _ _) (list names)]
-      [(named-rep rec n mis)
-       (named-rep (flatten-names rec)
-                  n
-                  mis)]))
-
-  (match-a-pattern
-   pat
-   [`any '()]
-   [`number '()]
-   [`string '()]
-   [`natural '()]
-   [`integer '()]
-   [`real '()]
-   [`boolean '()]
-   [`variable '()]
-   [`(variable-except ,s ...) '()]
-   [`(variable-prefix ,s) '()]
-   [`variable-not-otherwise-mentioned '()]
-   [`hole '()]
-   ;; Not sure
-   [`(nt ,id) '()]
-   [`(name ,name ,pat)
-    (list (named-pat name pat #t))]
-   [`(mismatch-name ,name ,pat)
-    (list (named-pat name pat #f))]
-   [`(in-hole ,p1 ,p2)
-    (append (sep-names p1)
-            (sep-names p2))]
-   [`(hide-hole ,p)
-    (sep-names p)]
-   ;; not sure about these 2, but they are unsupported by enum anyway
-   [`(side-condition ,p ,g ,e) '()] 
-   [`(cross ,s) '()]
-   [`(list ,sub-pats ...)
-    (apply append
-           (map (λ (sub-pat)
-                   (match sub-pat
-                     [`(repeat ,pat ,name ,mismatch)
-                      (list (named-rep (sep-names pat) name mismatch))]
-                     [else (sep-names sub-pat)]))
-                sub-pats))]
-   [(? (compose not pair?)) '()]))
+;; lift-names : pat -> with-names pat
+(define (lift-names pat)
+  (match pat
+    [`(name ,name ,p)
+     (with-names (set pat) ;; include this entire pattern so it can be
+                 ;; generated higher up if necessary
+                 (set)
+                 ;; We can safely assume that this will not have names in it
+                 `(name ,name
+                        ,(with-names (set)
+                                     (set)
+                                     p)))]
+    ;; same as name case
+    [`(mismatch-name ,name ,p)
+     (with-names (set pat) 
+                 (set)
+                 `(mismatch-name ,name
+                                 (with-names (set)
+                                             (set)
+                                             p)))]
+    [`(in-hole ,p1 ,p2)
+     (let ([w-names1 (lift-names p1)]
+           [w-names2 (lift-names p2)])
+       (match-let ([(with-names vars1 reps1 _) w-names1]
+                   [(with-names vars2 reps2 _) w-names2])
+         (with-names (set-union vars1 vars2)
+                     (set-union reps1 reps2)
+                     `(in-hole ,w-names1 ,w-names2))))]
+    [`(hide-hole ,p)
+     (let ([sub (lift-names p)])
+       (match-let ([(with-names vars reps _) sub])
+         (with-names vars
+                     reps
+                     sub)))]
+    [`(list ,sub-pats ...)
+     (define (lift-sub-pats sub-pat)
+       (match sub-pat
+         [`(repeat ,pat ,name ,mismatch)
+          (let ([rec (lift-names pat)])
+            (match-let ([(with-names vars reps _) rec])
+              (with-names vars
+                          (set-add reps
+                                   (named-rep name mismatch))
+                          `(repeat ,rec ,name ,mismatch))))]         
+         [else (lift-names sub-pat)]))
+     (let* ([subs (map lift-sub-pats sub-pats)]
+            [vars (fold-map/set with-names-vars subs)]
+            [reps (fold-map/set with-names-reps subs)])
+       (with-names vars
+                   reps
+                   subs))]
+    ;; Everything else is non-recursive/non-named so there are no names there
+    [_ (with-names (set)
+                   (set)
+                   pat)]))
 
 ;; assoc-names : μT. (U named-pat
 ;;                      (named-rep T)
@@ -85,11 +80,11 @@
 ;;                                 (named-rep T))))
 ;;               -> μT. (with-names
 ;;                         (U named-pat (named-rep T)
-;;                            (listof named-pat
-;;                                    (with-names
-;;                                       (named-rep T))))))
+;;                            (listof (with-names
+;;                                       (U named-pat (named-rep T)))))))
 ;; associates every named pattern or list of named patterns with the set of
 ;; names for patterns and repeats that are used within it
+#;
 (define (assoc-names named)
   (match named
     [(named-pat _ _ _)
@@ -112,7 +107,13 @@
                                     sub-assocs)])
        (with-names sub-names
                    sub-reps
-                   sub-assocs))]))
+                   sub-assocs))]
+    [`(in-hole ,p1 ,p2)
+     `(in-hole ,(assoc-names p1)
+               ,(assoc-names p2))]
+    [`(hide-hole ,p)
+     `(hide-hole ,(assoc-names p))]
+    [_ named]))
 
 ;; trim-names : with-names -> with-names
 
@@ -122,6 +123,7 @@
 ;; names associated with themselves and not the outer repeats, whereas
 ;; (x_1 ..._1 x_1 ..._1) will have the var pattern names associated
 ;; with the outer repeats and not the inner patterns.
+#;
 (define (trim-names w-names)
 
   ;; remove-names : with-names (setof named-pat) (setof named-rep) -> with-names
@@ -197,9 +199,11 @@
    (set-symmetric-difference s1 s2)))
 
 (module+
- test
- (provide named-pat
-          named-rep
-          sep-names
-          multi-occurrences
-          set-difference))
+    test
+  (provide named-rep
+           with-names
+
+           lift-names
+          
+           multi-occurrences
+           set-difference))
