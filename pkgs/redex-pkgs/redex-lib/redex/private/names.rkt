@@ -74,6 +74,95 @@
                    (set)
                    pat)]))
 
+;; trim-names : with-names -> with-names
+
+;; trim-names returns a new version of a with-names struct wherein the
+;; names are only associated with the outermost pattern that contains
+;; them, e.g., (x_1 ..._1 x_2 ..._2) will have the variable pattern
+;; names associated with themselves and not the outer repeats, whereas
+;; (x_1 ..._1 x_1 ..._1) will have the var pattern names associated
+;; with the outer repeats and not the inner patterns.
+(define (trim-names pat)
+
+  ;; rem-vars, rem-reps are the vars/reps that will be enumerated at a
+  ;; higher level and thus should be removed from sub-pats' w-names
+  (define (remove-names w-names rem-vars rem-reps)
+    
+    (define (bare-rec p)
+      (remove-names p rem-vars rem-reps))
+    
+    (match-let ([(with-names vars reps pat) w-names])
+      (let ([trimmed-vars (λ () (set-subtract vars rem-vars))]
+            [trimmed-reps (λ () (set-subtract reps rem-reps))])
+      
+        (match pat
+          [`(name ,n ,p)
+           (with-names (trimmed-vars)
+                       (trimmed-reps)
+                       `(name ,n ,(remove-names (set-add rem-vars pat)
+                                                rem-reps
+                                                p)))]
+          
+          [`(mismatch-name ,n ,p) (error "unimplemented")
+           (with-names (trimmed-vars)
+                       (trimmed-reps)
+                       `(mismatch-name ,n
+                                       (remove-names (set-add rem-vars pat)
+                                                     rem-reps
+                                                     p)))]
+          
+          [`(in-hole ,p1 ,p2) (error "unimplemented")
+           (let* ([inter/under (λ (f)
+                                  (set-intersect (f p1)
+                                                 (f p2)))]
+                  [common-vars (inter/under with-names-vars)]
+                  [common-reps (inter/under with-names-reps)]
+                  [enum-vars (set-subtract common-vars rem-vars)]
+                  [enum-reps (set-subtract common-reps rem-reps)])
+             (with-names enum-vars
+                         enum-reps
+                         `(in-hole ,(remove-names p1 enum-vars enum-reps)
+                                   ,(remove-names p2 enum-vars enum-reps))))]
+
+          ;; maybe just empty for hide-hole? Doesn't really matter....
+          [`(hide-hole ,p)
+           (with-names (trimmed-vars)
+                       (trimmed-vars)
+                       `(hide-hole ,(bare-rec p)))]
+        
+          [`(list ,sub-pats ...) (error "unimplemented")
+           (let* ([multi-occ/f
+                   (λ (f rem)
+                      (apply multi-occurrences
+                             (map (λ (sub)
+                                     (set-difference (f sub) rem))
+                                  sub-pats)))]
+                  [enum-vars (multi-occ/f with-names-vars rem-vars)]
+                  [enum-reps  (multi-occ/f with-names-reps rem-reps)])
+             (with-names enum-vars
+                         enum-reps
+                         (map (λ (sub-w-name)
+                                 (let ([rem-vars (set-union enum-vars rem-vars)]
+                                       [rem-reps (set-union enum-reps rem-reps)])
+                                   (remove-names sub-w-name rem-vars rem-reps))))))]
+
+          ;; Add this case to the toplevel for readability
+          [`(repeat ,p ,name ,mis)
+           (with-names (trimmed-vars)
+                       (trimmed-reps)
+                       `(repeat ,(remove-names p
+                                               rem-vars
+                                               (set-add rem-reps (named-rep name mis)))
+                                ,name
+                                ,mis))]
+          ;; non-recursive
+          [_ (with-names (trimmed-vars)
+                         (trimmed-reps)
+                         pat)]))))
+  
+  (remove-names pat (set) (set)))
+
+
 ;; assoc-names : μT. (U named-pat
 ;;                      (named-rep T)
 ;;                      (listof (U named-pat
@@ -124,7 +213,7 @@
 ;; (x_1 ..._1 x_1 ..._1) will have the var pattern names associated
 ;; with the outer repeats and not the inner patterns.
 #;
-(define (trim-names w-names)
+(define (tim-names w-names)
 
   ;; remove-names : with-names (setof named-pat) (setof named-rep) -> with-names
   (define (remove-names w-names n-pat-remove n-rep-remove)
