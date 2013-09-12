@@ -296,3 +296,24 @@
           
            multi-occurrences
            set-difference))
+
+;; Ultimately, what do we need in order to enumerate something???
+
+;; 1) The environment of bound ids: bound names, mismatches, repeats
+;;    and mismatch repeats. This will be passed as 1-4 parameters
+;;    
+;; 2) A way to know what ids to enumerate at my level AND what their dependencies are
+;;    e.g., for the pattern ((x_1 ..._2) ..._1 (x x_1 ..._2) ..._1),
+;;          the top level list pattern needs to enumerate:
+;;          ..._1 as a nat
+;;          ..._2 as a list of nats of length ..._1
+;;          x_1   as a list of lists of `x`s where the outer list has
+;;                   length ..._1 and the inner list has length ..._2
+;;                   (using traverse/e we only need the list ..._2)
+;;          That means we need to know to bind these variables in this order !
+;;          (currently we know at what level to bind them, but not in what order!)
+
+;; 3) A way to recursively enumerate any subpatterns with the bindings
+;;    I've just introduced.
+;;    This should be a simple application of dep/e combined with
+;;    whatever the current pattern is
