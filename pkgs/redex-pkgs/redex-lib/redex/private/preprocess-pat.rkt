@@ -63,7 +63,7 @@
                     `(repeat ,sub ,s-n ,s-m)]
                    [sub-pat (strip sub-pat)])
                   sub-pats))]
-      [else pat]))
+      [_ pat]))
   (strip pat))
 
 (define (find-names pat)
@@ -85,4 +85,4 @@
                    (2set-add (find-names p) n m)]
                   [sub-pat (find-names sub-pat)])
                  sub-pats))]
-    [else 2set-empty]))
+    [_ 2set-empty]))

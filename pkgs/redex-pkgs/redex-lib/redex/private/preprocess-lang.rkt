@@ -77,7 +77,7 @@
                        (loop pat s)]
                       [else (loop sub-pat s)]))
                  sub-pats)]
-               [else s])))
+               [_ s])))
         (nt-rhs nt))))
    (hash)
    lang))

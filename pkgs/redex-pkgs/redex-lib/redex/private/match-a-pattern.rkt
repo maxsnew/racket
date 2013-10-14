@@ -1,8 +1,11 @@
 #lang racket/base
 (require racket/match 
-         (for-syntax racket/match
+         (for-syntax racket/function
+                     racket/list
+                     racket/match
                      racket/base))
-(provide match-a-pattern)
+(provide match-a-pattern
+         match-an-enum-supported-recursive-pattern)
 
 #|
 
@@ -23,7 +26,7 @@ a self-reference in the grammar.
   condition ::= (-> bindings? any) ;; any is treated like a boolean
 
 Also, the `(cross ,nt) pattern alwyas has hypenated non-terminals, ie
-(cross e) in the source turns into (cross e-e) after translation (which
+(cross e) in the source turns into (cross e-e) after translation which
 means that the other cross non-terminals, e.g. (cross e-v), are not
 directly available as redex patterns, but can only be used via the
 non-terminals that Redex creates for the cross languages.
@@ -138,3 +141,67 @@ turns into this:
      (let ()
        (check-pats (syntax->list #'(pats ...)) #f)
        #'(match to-match [pats rhs ...] ...))]))
+
+(begin-for-syntax
+ ;; split-last : (nonempty-listof any) -> (values any (listof any))
+ (define (split-last xs)
+   (define (loop xs acc)
+     (match xs
+       [(list x)
+        (values x (reverse acc))]
+       [(cons x xs)
+        (loop xs (cons x acc))]))
+   (loop xs '()))
+ 
+ (define (else-clause? stx)
+   (match (syntax->datum stx)
+     [(list '_ _ ...) #t]
+     [_ #f]))
+ (define non-recursive-patterns
+   '(`any
+     `number
+     `string
+     `natural
+     `integer
+     `real
+     `boolean
+     `variable
+     `(variable-except ,var ...)
+     `(variable-prefix ,var)
+     `variable-not-otherwise-mentioned
+     `hole
+     `(nt ,var)
+     `(side-condition ,pat ,condition ,srcloc-expr)
+     `(cross ,var)
+     (? (compose not pair?))))
+ (define (zip-others rhss)
+   (define len (length non-recursive-patterns))
+   (map cons
+        non-recursive-patterns
+        (build-list len (const rhss)))))
+
+(define-syntax (match-an-enum-supported-recursive-pattern stx)
+  (syntax-case stx ()
+    [(_ to-match [pats rhs ...] ...)
+     (let ([all-pats (syntax->list #'([pats rhs ...] ...))])
+       (unless (not (empty? all-pats))
+         (raise-syntax-error 'match-a-recursive-enum-pattern
+                             (format "No patterns used")
+                             stx))
+       (define-values (last recs)
+         (split-last all-pats))
+       (unless (else-clause? last)
+         (raise-syntax-error 'match-a-recursive-enum-pattern
+                             (format "Last pattern should be _, instead got ~s"
+                                     (car (syntax->datum last)))
+                             stx))
+       (define else-rhss (datum->syntax stx (cdr (syntax->datum last))))
+       (define other-branches
+         (zip-others else-rhss))
+       (define output
+        #`(match-a-pattern
+           to-match
+           #,@other-branches          
+           #,@recs))
+       (displayln output)
+       output)]))
