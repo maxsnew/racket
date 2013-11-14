@@ -132,6 +132,16 @@
 (try-it 100 NRep v4)
 (try-it 100 NRep v5)
 
+;; Mismatch repeats
+(define-language MRep
+  (tc1 (natural ..._!_1 boolean ..._!_1))
+  (tc2 (natural ..._!_1 string ... boolean ..._!_1))
+  (tc3 (tc1_1 ..._!_1 tc1_1 ... boolean ..._!_1)))
+
+(try-it 100 MRep tc1)
+(try-it 100 MRep tc2)
+(try-it 100 MRep tc3)
+
 ;; Test production sort
 (define-language rec
   (e (e e)

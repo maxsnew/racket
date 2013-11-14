@@ -112,9 +112,8 @@
      [`(name ,n ,pat)
       (const/e (name-ref n))]
      [`(mismatch-name ,n ,tag)
-      (unsupported "mismatch patterns")
       ;; (const/e (misname-ref n tag))
-      ]
+      (unsupported "mismatch patterns")]
      [`(in-hole ,p1 ,p2)
       (map/e decomp
              (match-lambda
@@ -142,45 +141,113 @@
              (λ (rep)
                 (repeat-terms rep))
              (many/e (loop pat)))]
-           [`(repeat ,tag ,n #f)
+           [`(repeat ,tag ,n ,m)
             (const/e (nrep-ref n tag))]
-           [`(repeat ,pat ,n ,m)
-            (unimplemented "mismatch repeats (..._!_)")]
            [else (loop sub-pat)])))]
      [(? (compose not pair?)) 
       (const/e pat)]))
   (loop pat))
 
 (define/match (env/e nv l-enums unused/e)
-  [((env names misnames nreps) _ _)
+  [((env names misnames nreps mreps) _ _)
    (define (val/e p)
      (pat-refs/e p l-enums unused/e))
 
    (define/match (misvals/e p-ts)
      [((cons p ts))
       (define p/e (val/e p))
-      (fold-enum (λ (ts-excepts tag)
-                    (define excepts
-                      (map cdr ts-excepts))
-                    (cons/e (const/e tag)
-                            (apply except/e p/e excepts)))
-                 (set->list ts))])
+      (dep-fold/e (λ (ts-excepts tag)
+                     (define excepts
+                       (map cdr ts-excepts))
+                     (cons/e (const/e tag)
+                             (apply except/e p/e excepts)))
+                  (set->list ts))])
    
    (define/match (reprec/e nv-t)
      [((cons nv tpats))
       (define tpats/e
         (hash-traverse/e val/e tpats))
-      (many/e
-       (cons/e (env/e nv l-enums unused/e)
-               tpats/e))])
+      (define env-tpats/e
+        (cons/e (env/e nv l-enums unused/e)
+                tpats/e))
+      (many/e env-tpats/e)])
+   (define/match (reprec-n/e nv-t n)
+     [((cons nv tpats) _)
+      (define tpats/e
+        (hash-traverse/e val/e tpats))
+      (define env-tpats/e
+        (cons/e (env/e nv l-enums unused/e)
+                tpats/e))
+      (many/e env-tpats/e n)])
+
+   (define (mreps/e mreps mrep-nreps)
+     ;; lengths-table/e : Enum (Listof (Pairof Symbol Integer))
+     (define lengths-table/e
+       (hash-traverse/e (λ (xs)
+                           (map/e (λ (xs ts) (map cons xs ts))
+                                  (λ (xs-ts)
+                                     (for/lists (xs ts)
+                                                ([x-t (in-list xs-ts)])
+                                         (values (car xs-ts) (cdr xs-ts))))
+                                  (const/e xs)
+                                  (many-distinct/e nats/e (length xs))))
+                        mreps))
+     (dep/e lengths-table/e
+            (λ (mis-lengths-table)
+               (define mis-lengths
+                 (append* (hash-values mis-lengths-table)))
+               (hash-seq/e
+                (for/hash ([(n nv-t) (in-hash mrep-nreps)])
+                  (define len (cdr (assoc n mis-lengths)))
+                  (values n (reprec-n/e nv-t len)))))))
+   
    (define names-env
      (hash-traverse/e val/e names))
 
    (define misnames-env
      (hash-traverse/e misvals/e misnames))
+
+   (define invert-mreps
+     (for/fold ([acc (hash)])
+               ([(mname nnames) (in-hash mreps)])
+       (hash-union acc
+                   (for/hash ([nname (in-list nnames)])
+                     (values nname mname))
+                   (λ (k v1 v2)
+                      (error 'hash-union "This shouldn't happen k=~s, v1=~s, v2=~s" k v1 v2)))))
+   
+   (define-values (non-mrep-nreps mrep-nreps)
+     (for/fold ([non-mrep-nreps (hash)]
+                [mrep-nreps (hash)])
+               ([(k v) (in-hash nreps)])
+       (cond [(hash-has-key? invert-mreps k)
+              (values non-mrep-nreps (hash-set mrep-nreps k v))]
+             [else
+              (values (hash-set non-mrep-nreps k v) mrep-nreps)])))
    
    (define nreps-env
-     (hash-traverse/e reprec/e nreps))
+     (map/e
+      (match-lambda**
+       [(t1 (cons dep t2))
+        (define t-union
+          (for/fold ([t t1])
+              ([(k v) (in-hash t2)])
+            (hash-set t k v)))
+        (cons dep t-union)])
+      (match-lambda
+       [(cons dep t)
+        (define non-mrep-nreps/e
+          (for/hash ([k (in-hash-keys non-mrep-nreps)])
+            (values k (hash-ref t k))))
+        (define mrep-nreps/e
+          (for/hash ([k (in-hash-keys mrep-nreps)])
+            (values k (hash-ref t k))))
+        (values non-mrep-nreps/e
+                (cons dep mrep-nreps/e))])
+      (hash-traverse/e reprec/e non-mrep-nreps)
+      (mreps/e mreps mrep-nreps)))
+   
+   
    (map/e
     t-env
     (match-lambda
@@ -215,26 +282,29 @@
         (hide-hole (p-fn nv)))]
     [(name-ref n)
      (λ (nv)
-        (t-env-name-ref nv n))]
+        ((refs-to-fn (t-env-name-ref nv n)) nv))]
     [(misname-ref n tag)
      (λ (nv)
         ((refs-to-fn (t-env-misname-ref nv n tag)) nv))]
     [(list subrefpats ...)
-     (compose
-      append*
-      (sequence-fn
-       (for/list ([subrefpat (in-list subrefpats)])
-         (match subrefpat
-           [(repeat _ subs)
-            (sequence-fn (map refs-to-fn subs))]
-           [(nrep-ref n tag)
-            (λ (nv)
-               (define env-ts (t-env-nrep-ref nv n))
-               (for/list ([nv-t (in-list env-ts)])
-                 (match nv-t
-                   [(cons nv tterms)
-                    ((refs-to-fn (hash-ref tterms tag)) nv)])))]
-           [_ (sequence-fn (list (refs-to-fn subrefpat)))]))))]
+     (define 1-t
+       (compose
+        append*
+        (sequence-fn
+         (for/list ([subrefpat (in-list subrefpats)])
+           (match subrefpat
+             [(repeat _ subs)
+              (sequence-fn (map refs-to-fn subs))]
+             [(nrep-ref n tag)
+              (λ (nv)
+                 (define env-ts (t-env-nrep-ref nv n))
+                 (for/list ([nv-t (in-list env-ts)])
+                   (match nv-t
+                     [(cons nv tterms)
+                      ((refs-to-fn (hash-ref tterms tag)) nv)])))]
+             [_ (sequence-fn (list (refs-to-fn subrefpat)))])))))
+     (λ (nv)
+        (map (λ (tt) ((refs-to-fn tt) nv)) (1-t nv)))]
     [else (λ (_) refpat)]))
 
 (define (plug-hole ctx term)

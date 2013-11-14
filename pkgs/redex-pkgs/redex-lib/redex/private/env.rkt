@@ -8,12 +8,13 @@
          empty-env
          add-name
          add-mismatch
-         pure-nrep
+         pure-repeat
          env-union
          (struct-out t-env)
          t-env-name-ref
          t-env-misname-ref
-         t-env-nrep-ref)
+         t-env-nrep-ref
+         hash-union)
 
 ;; For now, accept any pattern
 (define-type Pattern Any)
@@ -25,32 +26,39 @@
 
 (struct: env ([names    : (HashTable Symbol Pattern)]
               [misnames : (HashTable Symbol (Pairof Pattern (Setof Tag)))]
-              [nreps    : (HashTable Symbol (Pairof Env (Tagged Pattern)))])
+              [nreps    : (HashTable Symbol (Pairof Env (Tagged Pattern)))]
+              [mreps    : (HashTable Symbol (Listof Symbol))])
          #:transparent)
 
 (struct: t-env ([names    : (HashTable Symbol Term)]
                 [misnames : (HashTable Symbol (Listof (Pairof Tag Term)))]
-                [nreps    : (HashTable Symbol (Listof (Pairof TEnv (Tagged Term))))])
+                [nreps    : (Pairof (HashTable Symbol (Listof (Pairof Symbol Exact-Nonnegative-Integer)))
+                                    (HashTable Symbol (Listof (Pairof TEnv (Tagged Term)))))])
          #:transparent)
 
 (: empty-env : Env)
 (define empty-env
-  (env (hash) (hash) (hash)))
+  (env (hash) (hash) (hash) (hash)))
 
 (: empty-t-env : TEnv)
 (define empty-t-env
-  (t-env (hash) (hash) (hash)))
+  (t-env (hash)
+         (hash)
+         (cons (ann (hash)
+                    (HashTable Symbol (Listof (Pairof Symbol Exact-Nonnegative-Integer))))
+               (ann (hash)
+                    (HashTable Symbol (Listof (Pairof TEnv (Tagged Term))))))))
 
 (: add-name : Env Symbol Pattern -> Env)
 (define/match (add-name e n p)
-  [((env names misnames nreps) _ _)
+  [((env names misnames nreps mreps) _ _)
    (define (default) p)
    (define update identity)
-   (env (hash-update names n update default) misnames nreps)])
+   (env (hash-update names n update default) misnames nreps mreps)])
 
 (: add-mismatch : Env Symbol Pattern Tag -> Env)
 (define/match (add-mismatch e n p t)
-  [((env names misnames nreps) _ _ _)
+  [((env names misnames nreps mreps) _ _ _)
    (: default : -> (Pairof Pattern (Setof Tag)))
    (define (default) (cons p (set t)))
    (: update : (Pairof Pattern (Setof Tag)) -> (Pairof Pattern (Setof Tag)))
@@ -59,19 +67,31 @@
       (cons p (set-add ts t))])
    (env names
         (hash-update misnames n update default)
-        nreps)])
+        nreps
+        mreps)])
 
-(: pure-nrep : Symbol Env Tag Pattern -> Env)
-(define (pure-nrep n repnv tag pat)
+(: pure-repeat : (Option Symbol) (Option Symbol) Env Tag Pattern -> Env)
+(define (pure-repeat n m repnv tag pat)
   (: nreps : (HashTable Symbol (Pairof Env (Tagged Pattern))))
   (define nreps
-    (hash-set (ann (hash) (HashTable Symbol (Pairof Env (Tagged Pattern))))
-              n
-              (cons repnv
-                    (hash-set (ann (hash) (Tagged Pattern))
-                              tag
-                              pat))))
-  (env (hash) (hash) nreps))
+    (if n
+        (hash-set (ann (hash) (HashTable Symbol (Pairof Env (Tagged Pattern))))
+                  n
+                  (cons repnv
+                        (hash-set (ann (hash) (Tagged Pattern))
+                                  tag
+                                  pat)))
+        (hash)))
+  (: mreps : (HashTable Symbol (Listof Symbol)))
+  (define mreps
+    (if m
+        (if n
+            (hash-set (ann (hash) (HashTable Symbol (Listof Symbol)))
+                      m
+                      (list n))
+            (redex-error 'pure-repeat "Given a mismatch name ~s, with no name ~s. This is a bug!" m n))
+        (hash)))
+  (env (hash) (hash) nreps mreps))
 
 (: t-env-name-ref : TEnv Symbol -> Term)
 (define/match (t-env-name-ref e n)
@@ -88,22 +108,19 @@
    (cond [maybe-term (cdr maybe-term)]
          [else (redex-error 't-env-misname-ref "mismatch name tag not found: ~s" tag)])])
 
-(: t-env-nrep-ref : TEnv Symbol -> (Listof (Pairof TEnv Term)))
+(: t-env-nrep-ref : TEnv Symbol -> (Listof (Pairof TEnv (Tagged Term))))
 (define/match (t-env-nrep-ref nv n)
-  [((t-env _ _ nreps) n)
+  [((t-env _ _ (cons _ nreps)) n)
    (hash-ref nreps n (thunk (redex-error 't-env-nrep-ref "repeat not found: ~s" n)))])
 
 (: env-union : Env Env -> Env)
 (define/match (env-union e1 e2)
-  [((env ns1 ms1 rs1) (env ns2 ms2 rs2))
-   
-   (define names-union
-     (hash-union ns1
-                 ns2
-                 (λ (_ v1 v2)
-                    (unless (equal? v1 v2)
-                      (redex-error 'generate-term-#:ith "named patterns must be the same pattern"))
-                    v1)))
+  [((env ns1 ms1 nrs1 mrs1) (env ns2 ms2 nrs2 mrs2))
+   (: name-combo : Symbol Pattern Pattern -> Pattern)
+   (define (name-combo _ v1 v2)
+     (unless (equal? v1 v2)
+       (redex-error 'generate-term-#:ith "named patterns must be the same pattern"))
+     v1)
 
    (: mis-combo : Symbol (Pairof Pattern (Setof Tag)) (Pairof Pattern (Setof Tag)) -> (Pairof Pattern (Setof Tag)))
    (define/match (mis-combo k pts1 pts2)
@@ -111,10 +128,6 @@
       (unless (equal? p1 p2)
         (redex-error 'generate-term-#:ith "mismatch named patterns must be the same pattern"))
       (cons p1 (set-union ts1 ts2))])
-   
-   (: misnames-union : (HashTable Symbol (Pairof Pattern (Setof Tag))))
-   (define misnames-union
-     (hash-union ms1 ms2 mis-combo))
    
    (: nrep-combo : Symbol (Pairof Env (Tagged Pattern)) (Pairof Env (Tagged Pattern)) -> (Pairof Env (Tagged Pattern)))
    (define/match (nrep-combo _ e-t1 e-t2)
@@ -125,9 +138,18 @@
                            (redex-error 'env-union
                                         "2 tags should never collide, but these did: ~s, ~s with tag: ~s in envs ~s and ~s"
                                         _1 _2 t e1 e2))))])
+
+   (define names-union
+     (hash-union ns1 ns2 name-combo))
+   (define misnames-union
+     (hash-union ms1 ms2 mis-combo))
    (define nreps-union
-     (hash-union rs1 rs2 nrep-combo))
-   (env names-union misnames-union nreps-union)])
+     (hash-union nrs1 nrs2 nrep-combo))
+   (define mreps-union
+     (hash-union mrs1 mrs2 (λ: ([_ : Symbol]  [l1 : (Listof Symbol)] [l2 : (Listof Symbol)])
+                               (append l1 l2))))
+   
+   (env names-union misnames-union nreps-union mreps-union)])
 
 (: key-set : (All (k v) (HashTable k v) -> (Setof k)))
 (define (key-set m)

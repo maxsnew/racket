@@ -23,6 +23,7 @@
          sum/e
          disj-sum/e
          cons/e
+         zip/e
          dep/e
          dep2/e ;; requires size (eventually should replace dep/e with this)
          map/e
@@ -35,12 +36,14 @@
          list/e
          traverse/e
          hash-traverse/e
+         hash-seq/e
          
          fail/e
          
          to-list
          take/e
-         fold-enum
+         dep-fold/e
+         many-distinct/e
 
          nats/e
          range/e
@@ -53,6 +56,7 @@
          num/e
          integer/e
          bool/e
+         
          real/e
          string/e)
 
@@ -93,6 +97,7 @@
           (λ (ys)
              (call-with-values (λ () (inv-f ys)) list))   
           es/e)]))
+
 
 ;; filter/e : enum a, (a -> bool) -> enum a
 ;; size won't be accurate!
@@ -196,9 +201,10 @@
   (enum +inf.f
         identity
         (λ (n)
-           (unless (>= n 0)
+           (unless (exact-nonnegative-integer? n)
              (redex-error 'encode "Not a natural"))
            n)))
+
 (define ints/e
   (enum +inf.f
         (λ (n)
@@ -432,6 +438,23 @@
     [(a b c . rest)
      (cons/e a (apply cons/e b c rest))]))
 
+;; zip/e : (Enum a) (Enum b) -> (Enum (Pairof a b))
+(define/match (zip/e e1 e2)
+  [((enum s1 _ _) (enum s2 _ _))
+   (define minimum
+     (match* ((infinite? s1) (infinite? s2))
+       [(#t #f) s2]
+       [(#f #t) s1]
+       [(_ _) (min s1 s2)]))
+   (unless (exact-nonnegative-integer? minimum)
+     (error 'zip/e "not a natural? wtf! min of ~s and ~s is ~s" s1 s2 minimum ))
+   (enum (min s1 s2)
+         (λ (n) (cons (decode e1 n)
+                      (decode e2 n)))
+         (match-lambda
+          [(cons x y)
+           (encode e1 x)]))])
+
 ;; Traversal (maybe come up with a better name
 ;; traverse/e : (a -> enum b), (listof a) -> enum (listof b)
 (define (traverse/e f xs)
@@ -453,6 +476,10 @@
   (map/e make-immutable-hash
          hash->list
          assoc/e))
+
+;; hash-seq/e : HashTable k (Enum v) -> Enum (HashTable k v)
+(define (hash-seq/e ht)
+  (hash-traverse/e identity ht))
 
 ;; the nth triangle number
 (define (tri n)
@@ -697,20 +724,26 @@
                       l))))])))
 
 ;; fold-enum : ((listof a), b -> enum a), (listof b) -> enum (listof a)
-(define (fold-enum f l)
+(define (dep-fold/e f l)
   (map/e
    reverse
    reverse
-   (let loop ([l l]
-              [acc (const/e '())])
-     (cond [(empty? l) acc]
-           [else
-            (loop
-             (cdr l)
-             (flip-dep/e
-              acc
-              (λ (xs)
-                 (f xs (car l)))))]))))
+   (foldl (λ (x acc)
+             (flip-dep/e acc
+                         (λ (xs)
+                            (f xs x))))
+          (const/e '())
+          l)))
+
+;; many-distinct/e : (All (a) (Enum a) n -> Enum (Listof a))
+(define (many-distinct/e e n)
+  ;; goal : Enum (Listof a)
+  ;; fold-enum : ((Listof a) b -> Enum a) (Listof b) -> Enum (Listof a)
+  ;; n-list : Listof Nil
+  
+  (dep-fold/e (λ (used _)
+                (apply except/e e used))
+             (build-list n (const '()))))
 
 ;; flip-dep/e : enum a (a -> enum b) -> enum (b,a)
 (define (flip-dep/e e f)

@@ -52,15 +52,13 @@
          (for/list ([sub-pat (in-list sub-pats)])
            (match sub-pat
              [`(repeat ,p #f #f)
+              (match-define (ann-pat subenv subp) (walk p))
               (ann-pat empty-env sub-pat)]
-             [`(repeat ,p ,n #f)
-              (match-define (ann-pat subenv subp)
-                            (walk p))
-              (define tag (get-and-inc!))
-              (ann-pat (pure-nrep n subenv tag subp)
-                       `(repeat ,tag ,n #f))]
              [`(repeat ,p ,n ,m)
-              (unimplemented "mismatch repeat")]
+              (match-define (ann-pat subenv subp) (walk p))
+              (define tag (get-and-inc!))
+              (ann-pat (pure-repeat n m subenv tag subp)
+                       `(repeat ,tag ,n #f))]
              [_ (walk sub-pat)])))
        (define list-env
          (for/fold ([accenv empty-env])
@@ -74,7 +72,7 @@
     (walk pat))
   res)
 
-;; Eliminates unnecessary pattern/mismatch-repeat names, and names unnamed repeats
+;; Eliminates unnecessary pattern/mismatch-repeat names, and names unnamed mismatch repeats
 (define (rewrite-names pat)
   (define names-2set (find-names pat))
   (define names (2set-ones names-2set))
@@ -116,8 +114,8 @@
              (map (match-lambda
                    [`(repeat ,p ,n ,m)
                     (define sub (rewrite p))
-                    (define s-n (or n (next-name!)))
                     (define s-m (keep-if-good m))
+                    (define s-n (or n (and s-m (next-name!))))
                     `(repeat ,sub ,s-n ,s-m)]
                    [sub-pat (rewrite sub-pat)])
                   sub-pats))]
@@ -144,7 +142,11 @@
             (2set)
             (map (match-lambda
                   [`(repeat ,p ,n ,m)
-                   (2set-add (find-names p) n m)]
+                   (define sub2 (find-names p))
+                   (define (add-non-false 2s s)
+                     (or (and (not s) 2s)
+                         (2set-add 2s s)))
+                   (add-non-false (add-non-false sub2 n) m)]
                   [sub-pat (find-names sub-pat)])
                  sub-pats))]
     [_ (2set)]))

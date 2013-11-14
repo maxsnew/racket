@@ -314,6 +314,8 @@
 
 (define nats-up
   (dep/e nats/e nats+/e))
+(define lists/e
+  (dep/e nats/e (λ (n) (many/e string/e n))))
 
 (test-begin
  (check-equal? (size 3-up) 6)
@@ -355,7 +357,9 @@
  (check-equal? (decode nats-up 6) (cons 0 3))
  (check-equal? (decode nats-up 7) (cons 1 3))
 
- (check-bijection? nats-up))
+ (check-bijection? nats-up)
+
+ (check-bijection? lists/e))
 
 ;; find-size tests
 (check-equal? (find-size (gvector) 5) #f)
@@ -430,13 +434,20 @@
  (check-equal? (decode not-3 3) 4)
  (check-bijection? not-3))
 
-;; fold-enum tests
+;; dep-fold/e tests
 (define complicated
-  (fold-enum
+  (dep-fold/e
    (λ (excepts n)
       (apply except/e (up-to n) excepts))
    '(2 4 6)))
 (check-bijection? complicated)
+
+;; many-distinct/e tests
+(define different-nats/e
+  (many-distinct/e nats/e 3))
+
+;; Should add a random property based test here
+(check-bijection? different-nats/e)
 
 ;; many/e tests
 (define natss
