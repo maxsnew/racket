@@ -4,6 +4,7 @@
          racket/set
 
          "2set.rkt"
+         "enumerator.rkt"
          "env.rkt"
          "error.rkt"
          "match-a-pattern.rkt")
@@ -13,7 +14,7 @@
 
 ;; preprocess : pat -> (ann-pat env pat)
 (define (preprocess pat)
-  (build-env (remove-names pat)))
+  (build-env (rewrite-names pat)))
 
 ;; This function returns an env containing all top-level name references, i.e., the ones that need to be enumerated doing anything
 (define (build-env pat)
@@ -73,44 +74,55 @@
     (walk pat))
   res)
 
-(define (remove-names pat)
+;; Eliminates unnecessary pattern/mismatch-repeat names, and names unnamed repeats
+(define (rewrite-names pat)
   (define names-2set (find-names pat))
   (define names (2set-ones names-2set))
   (define 2names (2set-manys names-2set))
   (define badnames (set-subtract names 2names))
+
+  (define count 0)
+  (define names/e (var-prefix/e '_..._))
+  (define (next-name!)
+    (define cur (decode names/e count))
+    (set! count (add1 count))
+    cur)
+
+  
   (define (strip-named name subpat con)
-    (define sub-stripped (strip subpat))
+    (define sub-stripped (rewrite subpat))
     (if (set-member? badnames name)
         sub-stripped
         (con name sub-stripped)))
   (define (keep-if-good name)
     (and (not (set-member? badnames name))
          name))
-  (define (strip pat)
+
+  (define (rewrite pat)
     (match-a-pattern/single-base-case pat
       [`(name ,n ,subpat)
        (strip-named n subpat (λ (n s) `(name ,n ,s)))]
       [`(mismatch-name ,n ,subpat)
        (strip-named n subpat (λ (n s) `(mismatch-name ,n ,s)))]
       [`(in-hole ,p1 ,p2)
-       `(in-hole ,(strip p1)
-                 ,(strip p2))]
+       `(in-hole ,(rewrite p1)
+                 ,(rewrite p2))]
       [`(hide-hole ,p)
-       `(hide-hole ,(strip p))]
+       `(hide-hole ,(rewrite p))]
       [`(side-condition ,p ,c ,s)
-       `(side-condition ,(strip p) ,c ,s)]
+       `(side-condition ,(rewrite p) ,c ,s)]
       [`(list ,sub-pats ...)
        (cons 'list
              (map (match-lambda
                    [`(repeat ,p ,n ,m)
-                    (define sub (strip p))
-                    (define s-n (keep-if-good n))
+                    (define sub (rewrite p))
+                    (define s-n (or n (next-name!)))
                     (define s-m (keep-if-good m))
                     `(repeat ,sub ,s-n ,s-m)]
-                   [sub-pat (strip sub-pat)])
+                   [sub-pat (rewrite sub-pat)])
                   sub-pats))]
       [_ pat]))
-  (strip pat))
+  (rewrite pat))
 
 (define (find-names pat)
   (match-a-pattern/single-base-case pat
