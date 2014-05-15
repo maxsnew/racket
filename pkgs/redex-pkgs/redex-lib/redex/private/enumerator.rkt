@@ -29,7 +29,8 @@
          disj-sum/e
          disj-append/e
          cons/e
-         elegant-cons/e
+         cantor-cons/e
+         boxy-cons/e
          dep/e
          dep2/e ;; requires size (eventually should replace dep/e with this)
          map/e
@@ -459,7 +460,8 @@
            (enum size dec enc)]))
   (foldr1 cons/e2 (cons e es)))
 
-(define (elegant-cons/e e1 e2)
+(define cantor-cons/e cons/e)
+(define (boxy-cons/e e1 e2)
   (define s1 (size e1))
   (define s2 (size e2))
   (cond [(not (and (infinite? s1)
