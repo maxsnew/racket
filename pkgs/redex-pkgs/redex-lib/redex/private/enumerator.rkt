@@ -58,6 +58,7 @@
          to-list
          take/e
          fold-enum
+         uniq-list/e
 
          nat/e
          range/e
@@ -766,6 +767,11 @@
               acc
               (λ (xs)
                  (f xs (car l)))))]))))
+
+(define (uniq-list/e e n)
+  (fold-enum (λ (xs _y)
+               (apply except/e e xs))
+             (for/list ([i (in-range n)]) 0)))
 
 ;; flip-dep/e : enum a (a -> enum b) -> enum (b,a)
 (define (flip-dep/e e f)
