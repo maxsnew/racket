@@ -487,31 +487,34 @@
            enc)]))
 
 ;; Like disj-sum/e, but sequences the enumerations instead of interleaving
-(define (disj-append/e e-p . e-ps)
-  (define/match (disj-append2/e e-p1 e-p2)
-    [((cons e1 1?) (cons e2 2?))
-     (define s1 (size e1))
-     (define s2 (size e2))
-     (when (infinite? s1)
-       (error "Only the last enum in a call to disj-append/e can be infinite."))
-     (define (from-nat n)
-       (cond [(< n s1) (decode e1 n)]
-             [else (decode e2 (- n s1))]))
-     (define (to-nat x)
-       (cond [(1? x) (encode e1 x)]
-             [(2? x) (+ (encode e2 x) s1)]
-             [else (redex-error 'encode "bad term")]))
-     (enum (+ s1 s2) from-nat to-nat)])
-  (car
-   (foldr1 (λ (e-p1 e-p2)
-             (match* (e-p1 e-p2)
-                     [((cons e1 1?) (cons e2 2?))
-                      (cons (disj-append2/e e-p1
-                                            (cons e2 (negate 1?)))
-                            (λ (x)
-                               (or (1? x)
-                                   (2? x))))]))
-           (cons e-p e-ps))))
+(define (disj-append/e e-ps)
+  (match e-ps
+    ['() empty/e]
+    [(cons e-p e-ps)
+     (define/match (disj-append2/e e-p1 e-p2)
+       [((cons e1 1?) (cons e2 2?))
+        (define s1 (size e1))
+        (define s2 (size e2))
+        (when (infinite? s1)
+          (error "Only the last enum in a call to disj-append/e can be infinite."))
+        (define (from-nat n)
+          (cond [(< n s1) (decode e1 n)]
+                [else (decode e2 (- n s1))]))
+        (define (to-nat x)
+          (cond [(1? x) (encode e1 x)]
+                [(2? x) (+ (encode e2 x) s1)]
+                [else (redex-error 'encode "bad term")]))
+        (enum (+ s1 s2) from-nat to-nat)])
+     (car
+      (foldr1 (λ (e-p1 e-p2)
+                 (match* (e-p1 e-p2)
+                         [((cons e1 1?) (cons e2 2?))
+                          (cons (disj-append2/e e-p1
+                                                (cons e2 (negate 1?)))
+                                (λ (x)
+                                   (or (1? x)
+                                       (2? x))))]))
+              (cons e-p e-ps)))]))
 
 (define (foldr1 f l)
   (match l
@@ -1347,8 +1350,8 @@
       [0 (const/e '())]
       [1 (const/e `(,bound))]
       [_
-       (define smallers/e (loop (sub1 len)))
        (define bounded/e (take/e nat/e (add1 bound)))
+       (define smallers/e (loop (sub1 len)))
        (define first-max/e
          (map/e
           (curry cons bound)
@@ -1366,6 +1369,14 @@
        (disj-append/e (cons first-not-max/e (negate first-max?))
                       (cons first-max/e     first-max?))]))
   (loop len))
+(define (bounded-list2/e len bound)
+  (define not-max/e (take/e nat/e bound))
+  (apply disj-append/e
+         (for/list ([num-max (in-range 1 len)])
+           (define num-not-max (len . - . num-max))
+           
+           )))
+
 
 (define (box-tuple k)
   (λ (xs)
